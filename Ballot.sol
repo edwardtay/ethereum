@@ -23,6 +23,15 @@ contract Ballot {
     // This declares a state variable that
     // stores a `Voter` struct for each possible address.
     mapping(address => Voter) public voters;
+    
+    // This declares a state variable 
+    // to record the voting start time
+    uint public startTime = now;  
+    
+    // check if the voting period is over
+    modifier voteEnded() {
+        require startTime < 5minutes
+    }; 
 
     // A dynamically-sized array of `Proposal` structs.
     Proposal[] public proposals;
@@ -112,7 +121,7 @@ contract Ballot {
 
     /// Give your vote (including votes delegated to you)
     /// to proposal `proposals[proposal].name`.
-    function vote(uint proposal) external {
+    function vote(uint proposal) external voteEnded {
         Voter storage sender = voters[msg.sender];
         require(sender.weight != 0, "Has no right to vote");
         require(!sender.voted, "Already voted.");
