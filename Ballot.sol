@@ -1,159 +1,113 @@
-// SPDX-License-Identifier: GPL-3.0
-pragma solidity >=0.7.0 <0.9.0;
-/// @title Voting with delegation.
-contract Ballot {
-    // This declares a new complex type which will
-    // be used for variables later.
-    // It will represent a single voter.
-    struct Voter {
-        uint weight; // weight is accumulated by delegation
-        bool voted;  // if true, that person already voted
-        address delegate; // person delegated to
-        uint vote;   // index of the voted proposal
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract Ballot{
+    //Vars
+    struct voter{
+        string voterName;
+        bool isVoted;
     }
 
-    // This is a type for a single proposal.
-    struct Proposal {
-        bytes32 name;   // short name (up to 32 bytes)
-        uint voteCount; // number of accumulated votes
+    struct Vote{
+        address voterAddress;
+        bool choice;
     }
 
-    address public chairperson;
+    //Start Time
+    uint public startTime;
 
-    // This declares a state variable that
-    // stores a `Voter` struct for each possible address.
-    mapping(address => Voter) public voters;
-    
-    // This declares a state variable 
-    // to record the voting start time
-    uint public startTime = now;  
-    
-    // check if the voting period is over
-    modifier voteEnded() {
-        require startTime < 5minutes
-    }; 
 
-    // A dynamically-sized array of `Proposal` structs.
-    Proposal[] public proposals;
+    uint private countResult;
+    uint public finalResult;
+    uint public totalVoter;
+    uint public totalVote;
 
-    /// Create a new ballot to choose one of `proposalNames`.
-    constructor(bytes32[] memory proposalNames) {
-        chairperson = msg.sender;
-        voters[chairperson].weight = 1;
+    address public ballotOfficalAddress;
+    string public ballotOfficialName;
+    string public proposal;
 
-        // For each of the provided proposal names,
-        // create a new proposal object and add it
-        // to the end of the array.
-        for (uint i = 0; i < proposalNames.length; i++) {
-            // `Proposal({...})` creates a temporary
-            // Proposal object and `proposals.push(...)`
-            // appends it to the end of `proposals`.
-            proposals.push(Proposal({
-                name: proposalNames[i],
-                voteCount: 0
-            }));
-        }
+    mapping(uint=>Vote) private votes;
+    mapping(address=>voter) public voterRgst;
+
+    enum State{
+        Created,
+        Voting,
+        Ended
     }
 
-    // Give `voter` the right to vote on this ballot.
-    // May only be called by `chairperson`.
-    function giveRightToVote(address voter) external {
-        // If the first argument of `require` evaluates
-        // to `false`, execution terminates and all
-        // changes to the state and to Ether balances
-        // are reverted.
-        // This used to consume all gas in old EVM versions, but
-        // not anymore.
-        // It is often a good idea to use `require` to check if
-        // functions are called correctly.
-        // As a second argument, you can also provide an
-        // explanation about what went wrong.
-        require(
-            msg.sender == chairperson,
-            "Only chairperson can give right to vote."
-        );
-        require(
-            !voters[voter].voted,
-            "The voter already voted."
-        );
-        require(voters[voter].weight == 0);
-        voters[voter].weight = 1;
+    State public state;
+
+
+
+    //funcs
+
+    constructor(string memory _ballotOfficalName, string memory _proposal){
+        ballotOfficalAddress = msg.sender;
+        ballotOfficialName = _ballotOfficalName;
+        proposal = _proposal;
+        state = State.Created;
     }
 
-    /// Delegate your vote to the voter `to`.
-    function delegate(address to) external {
-        // assigns reference
-        Voter storage sender = voters[msg.sender];
-        require(!sender.voted, "You already voted.");
-
-        require(to != msg.sender, "Self-delegation is disallowed.");
-
-        // Forward the delegation as long as
-        // `to` also delegated.
-        // In general, such loops are very dangerous,
-        // because if they run too long, they might
-        // need more gas than is available in a block.
-        // In this case, the delegation will not be executed,
-        // but in other situations, such loops might
-        // cause a contract to get "stuck" completely.
-        while (voters[to].delegate != address(0)) {
-            to = voters[to].delegate;
-
-            // We found a loop in the delegation, not allowed.
-            require(to != msg.sender, "Found loop in delegation.");
-        }
-
-        // Since `sender` is a reference, this
-        // modifies `voters[msg.sender].voted`
-        sender.voted = true;
-        sender.delegate = to;
-        Voter storage delegate_ = voters[to];
-        if (delegate_.voted) {
-            // If the delegate already voted,
-            // directly add to the number of votes
-            proposals[delegate_.vote].voteCount += sender.weight;
-        } else {
-            // If the delegate did not vote yet,
-            // add to her weight.
-            delegate_.weight += sender.weight;
-        }
+    function addVoter(address _voterAddress, string memory _voterName)public inState(State.Created) onlyOwner{
+        voter memory v;
+        v.voterName = _voterName;
+        v.isVoted = false;
+        voterRgst[_voterAddress] = v;
+        totalVoter++;
     }
 
-    /// Give your vote (including votes delegated to you)
-    /// to proposal `proposals[proposal].name`.
-    function vote(uint proposal) external voteEnded {
-        Voter storage sender = voters[msg.sender];
-        require(sender.weight != 0, "Has no right to vote");
-        require(!sender.voted, "Already voted.");
-        sender.voted = true;
-        sender.vote = proposal;
+    function startVote()public inState(State.Created) onlyOwner{
+        state = State.Voting;
+        startTime = block.timestamp;
 
-        // If `proposal` is out of the range of the array,
-        // this will throw automatically and revert all
-        // changes.
-        proposals[proposal].voteCount += sender.weight;
     }
 
-    /// @dev Computes the winning proposal taking all
-    /// previous votes into account.
-    function winningProposal() public view
-            returns (uint winningProposal_)
-    {
-        uint winningVoteCount = 0;
-        for (uint p = 0; p < proposals.length; p++) {
-            if (proposals[p].voteCount > winningVoteCount) {
-                winningVoteCount = proposals[p].voteCount;
-                winningProposal_ = p;
+    function vote(bool _choice)public inState(State.Voting) voteEnded() returns(bool){
+        bool found = false;
+        //Check is can voted
+        if(bytes(voterRgst[msg.sender].voterName).length != 0 && voterRgst[msg.sender].isVoted)
+        {
+            voterRgst[msg.sender].isVoted = true;
+            Vote memory v;
+            v.voterAddress = msg.sender;
+            v.choice = _choice;
+            if(_choice){
+                countResult++;
             }
+            votes[totalVote] = v;
+            totalVote++;
+            found = true;
         }
+        return found;
     }
 
-    // Calls winningProposal() function to get the index
-    // of the winner contained in the proposals array and then
-    // returns the name of the winner
-    function winnerName() external view
-            returns (bytes32 winnerName_)
-    {
-        winnerName_ = proposals[winningProposal()].name;
+    function endVote()public inState(State.Voting) onlyOwner{
+        state = State.Ended;
+        finalResult = countResult;
     }
+
+
+    //modifiers
+    modifier condiditon(bool _condiditon){
+        require(_condiditon);
+        _;
+    }
+
+    modifier onlyOwner(){
+        require(msg.sender == ballotOfficalAddress);
+        _;
+    }
+
+    modifier inState(State _state){
+        require(state == _state);
+        _;
+    }
+
+    //Check Time
+
+    modifier voteEnded(){
+        require(block.timestamp < startTime+300, "Voting time is over");
+        _;
+    }
+
 }
